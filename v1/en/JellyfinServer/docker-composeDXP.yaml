@@ -1,0 +1,179 @@
+# Jellyfin + Telerising + EasyEPG - project variables (Docker Compose)
+# File: docker-composeDXP.yaml (rename to docker-compose.yaml before import)
+# Copyright Roman Glos 01.02.2026
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-common-env: &common-env
+  TZ: "${TZ:-Europe/Berlin}"
+
+networks:
+  media_net:
+    driver: bridge
+
+services:
+  # ---------------------------------------------------------
+  # Jellyfin Media Server (DXP series / Intel QSV)
+  # ---------------------------------------------------------
+  jellyfin:
+    image: linuxserver/jellyfin:latest
+    container_name: jellyfin
+    restart: always
+    networks: [media_net]
+
+    # Intel iGPU / QSV (hardware transcoding)
+    devices:
+      - /dev/dri:/dev/dri
+
+    # If permissions fail on some systems/UGOS:
+    # -> enable privileged mode (just enable it). It is not required for "normal" setups.
+    # privileged: true
+
+    security_opt:
+      - no-new-privileges:true
+
+    environment:
+      <<: *common-env
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-10}"
+      UMASK: "${JELLYFIN_UMASK:-002}"
+      # Optional: external URL (if needed)
+      # JELLYFIN_PublishedServerUrl: "${JELLYFIN_PUBLISHED_URL:-}"
+
+    volumes:
+      # Jellyfin configuration (by default in the project folder)
+      - ${JELLYFIN_CONFIG_DIR:-./Jellyfin/config}:/config
+
+      # System directory (cache/transcoding/temp etc. are configured in Jellyfin)
+      - ${JELLYFIN_SYSTEM_DIR:-/volume2/JellyfinSystem}:/JellyfinSystem
+
+      # Media
+      - ${MEDIA_DIR:-/volume1/Jellyfin}:/data/media
+
+      # EasyEPG XML -> Jellyfin Live TV / XMLTV
+      - ${EASYEPG_XML_DIR:-./takealug_new-easyepg/easyepg_xml}:/config/epg:ro
+
+    ports:
+      # Jellyfin Web (HTTP)
+      - "${JELLYFIN_PORT_HTTP:-8096}:8096"
+
+      # Auto-discovery on the LAN (optional)
+      - "${JELLYFIN_PORT_DISCOVERY_UDP:-7359}:7359/udp"
+
+      # DLNA/SSDP (optional)
+      - "${JELLYFIN_PORT_DLNA_UDP:-1900}:1900/udp"
+
+      # Jellyfin HTTPS disabled (TLS via SWAG)
+      # - "${JELLYFIN_PORT_HTTPS:-8920}:8920"
+
+    logging: *default-logging
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  # ---------------------------------------------------------
+  # SWAG (Reverse Proxy + Let's Encrypt + Fail2Ban)
+  # ---------------------------------------------------------
+  swag:
+    image: linuxserver/swag:latest
+    container_name: jellyfin_swag
+    restart: always
+    networks: [media_net]
+
+    environment:
+      <<: *common-env
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-10}"
+      URL: "${SWAG_URL:-example.com}"
+      SUBDOMAINS: "${SWAG_SUBDOMAINS:-jellyfin}"
+      ONLY_SUBDOMAINS: "${SWAG_ONLY_SUBDOMAINS:-true}"
+      EMAIL: "${SWAG_EMAIL:-mail@example.com}"
+      FAIL2BAN_ENABLED: "${SWAG_FAIL2BAN_ENABLED:-true}"
+
+    volumes:
+      - ${SWAG_CONFIG_DIR:-./linuxserver_swag/config}:/config
+
+    ports:
+      - "${SWAG_PORT_HTTP:-5080}:80"
+      - "${SWAG_PORT_HTTPS:-50443}:443"
+      - "${SWAG_PORT_JELLYFIN_SSL:-8920}:8920"
+      - "${SWAG_PORT_DASH:-58080}:8080"
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    security_opt:
+      - no-new-privileges:true
+
+    depends_on:
+      - jellyfin
+
+    logging: *default-logging
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  # ---------------------------------------------------------
+  # EasyEPG (EPG generator / XML output)
+  # ---------------------------------------------------------
+  easyepg:
+    image: railsimulatornet/new-easyepg:bs4fix
+    container_name: jellyfin_easyepg
+    restart: always
+    networks: [media_net]
+
+    environment:
+      <<: *common-env
+      USER_ID: "${USER_ID:-1000}"
+      GROUP_ID: "${GROUP_ID:-10}"
+      TIMEZONE: "${TZ:-Europe/Berlin}"
+      UPDATE: "${EASYEPG_UPDATE:-yes}"
+      REPO: "${EASYEPG_REPO:-script.service.easyepg-lite}"
+      BRANCH: "${EASYEPG_BRANCH:-main}"
+      PYTHONPATH: "${EASYEPG_PYTHONPATH:-/easyepg/pylibs}"
+
+    volumes:
+      - ${EASYEPG_APP_DIR:-./takealug_new-easyepg/easyepg}:/easyepg
+      - ${EASYEPG_XML_DIR:-./takealug_new-easyepg/easyepg_xml}:/easyepg/xml
+
+    ports:
+      - "${EASYEPG_PORT:-4000}:4000"
+
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  # ---------------------------------------------------------
+  # Telerising (TV Streams API)
+  # ---------------------------------------------------------
+  telerising-api:
+    image: starfoxfs/telerising:latest
+    container_name: telerising-api
+    hostname: telerising
+    restart: unless-stopped
+    networks: [media_net]
+
+    environment:
+      <<: *common-env
+      UID: "${TELERISING_UID:-1000}"
+      GID: "${TELERISING_GID:-10}"
+      UPDATE: "${TELERISING_UPDATE:-yes}"
+
+    ports:
+      - "${TELERISING_PORT:-5000}:5000"
+
+    volumes:
+      - ${TELERISING_DIR:-./telerising}:/telerising
+
+    tmpfs:
+      - /tmp
+      - /var/log
+
+    labels:
+      - autoheal=true
+      - com.centurylinklabs.watchtower.enable=true

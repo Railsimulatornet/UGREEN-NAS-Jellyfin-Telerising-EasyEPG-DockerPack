@@ -1,0 +1,17 @@
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# Optional: keep Word sources local
+*.docx
+
+# Optional: keep local secrets outside git (if you create them)
+.env.local
+.env.private
+
+# Release assets are attached via GitHub Releases, not committed
+release-assets/
