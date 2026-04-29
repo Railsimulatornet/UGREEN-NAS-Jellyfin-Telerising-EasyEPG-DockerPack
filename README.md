@@ -1,4 +1,5 @@
 # Jellyfin + Telerising + EasyEPG DockerPack für UGREEN NAS
+![Jellyfin](Screens/JellyfinDockerPack.png)
 
 Dieses Repository enthält ein fertig vorbereitetes Docker-Projekt für **UGREEN NAS (UGOS Pro)**, das eine komplette **Jellyfin Live-TV Umgebung** inkl. **Reverse-Proxy (SWAG)**, **EPG (EasyEPG)** und **Telerising** bereitstellt.
 
