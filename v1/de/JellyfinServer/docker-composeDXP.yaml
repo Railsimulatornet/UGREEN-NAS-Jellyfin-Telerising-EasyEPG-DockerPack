@@ -120,7 +120,7 @@ services:
   # EasyEPG (EPG-Generator / XML Output)
   # ---------------------------------------------------------
   easyepg:
-    image: railsimulatornet/new-easyepg:bs4fix
+    image: railsimulatornet/new-easyepg:latest
     container_name: jellyfin_easyepg
     restart: always
     networks: [media_net]
