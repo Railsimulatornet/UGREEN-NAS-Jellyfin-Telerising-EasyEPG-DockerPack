@@ -1,0 +1,35 @@
+name: Compose Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '11 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate both languages and hardware variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          for language in de en; do
+            project="v1/$language/JellyfinServer"
+            test -s "$project/linuxserver_swag/config/fail2ban/filter.d/jellyfin-auth.conf"
+            for variant in DXP DH; do
+              docker compose --env-file "$project/.env" \
+                -f "$project/docker-compose$variant.yaml" config --quiet
+            done
+          done
