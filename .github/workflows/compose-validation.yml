@@ -21,15 +21,37 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Validate both languages and hardware variants
+      - name: Build and verify packages from committed sources
+        run: python3 .github/scripts/build-packages.py jellyfin --output "$RUNNER_TEMP/dockerpack"
+      - name: Check out Fail2Ban for authentication filter tests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: fail2ban/fail2ban
+          ref: 61799e15e1dd4389dea0cc7595da0a287835a177 # 1.1.0
+          path: .ci-tools/fail2ban
+          persist-credentials: false
+      - name: Test packaged authentication filters
+        run: >-
+          python3 .github/scripts/test-auth-filters.py jellyfin
+          --packages "$RUNNER_TEMP/dockerpack/unpacked"
+          --fail2ban-source .ci-tools/fail2ban
+      - name: Validate packaged languages and hardware variants
         shell: bash
         run: |
           set -euo pipefail
           for language in de en; do
-            project="v1/$language/JellyfinServer"
-            test -s "$project/linuxserver_swag/config/fail2ban/filter.d/jellyfin-auth.conf"
+            project="$RUNNER_TEMP/dockerpack/unpacked/$language/JellyfinServer"
             for variant in DXP DH; do
               docker compose --env-file "$project/.env" \
                 -f "$project/docker-compose$variant.yaml" config --quiet
             done
           done
+      - name: Upload verified package candidates
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jellyfin-packages-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/dockerpack/*.zip
+            ${{ runner.temp }}/dockerpack/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
