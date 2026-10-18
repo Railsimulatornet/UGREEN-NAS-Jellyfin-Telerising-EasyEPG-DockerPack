@@ -1,4 +1,7 @@
 # Jellyfin + Telerising + EasyEPG DockerPack für UGREEN NAS
+
+[![Compose](https://github.com/Railsimulatornet/UGREEN-NAS-Jellyfin-Telerising-EasyEPG-DockerPack/actions/workflows/compose-validation.yml/badge.svg?branch=main)](https://github.com/Railsimulatornet/UGREEN-NAS-Jellyfin-Telerising-EasyEPG-DockerPack/actions/workflows/compose-validation.yml)
+
 ![Jellyfin](Screens/JellyfinDockerPack.png)
 
 Dieses Repository enthält ein fertig vorbereitetes Docker-Projekt für **UGREEN NAS (UGOS Pro)**, das eine komplette **Jellyfin Live-TV Umgebung** inkl. **Reverse-Proxy (SWAG)**, **EPG (EasyEPG)** und **Telerising** bereitstellt.
@@ -6,7 +9,7 @@ Dieses Repository enthält ein fertig vorbereitetes Docker-Projekt für **UGREEN
 - Sprache: **Deutsch** (zusätzlich sind die Handbücher auch auf Englisch enthalten)
 - Varianten: **DXP-Serie (Intel)** und **DH-Serie (Rockchip/ARM)** mit separaten Compose-Dateien
 
-➡️ **Download:** Nutze die GitHub-**Releases** und lade die ZIP-Datei herunter.  
+➡️ **Download:** Lade die passende ZIP aus dem [aktuellen Release](https://github.com/Railsimulatornet/UGREEN-NAS-Jellyfin-Telerising-EasyEPG-DockerPack/releases/latest) herunter: `_de.zip` für Deutsch oder `_en.zip` für Englisch.  
 ➡️ **Handbuch:** Siehe PDF im jeweiligen Sprachordner (DE/EN).
 
 ---
@@ -35,8 +38,8 @@ Dieses Repository enthält ein fertig vorbereitetes Docker-Projekt für **UGREEN
 
 ## Installation (Quickstart, UGOS Pro)
 
-1) **ZIP aus Releases** herunterladen und entpacken, z.B. nach:  
-   `/volume2/docker/JellyfinServer/`
+1) **ZIP aus Releases** nach `/volume2/docker/` entpacken.  
+   Der Projektordner liegt danach unter `/volume2/docker/JellyfinServer/`.
 
 2) **Konfiguration anpassen**  
    Datei `.env` öffnen und mindestens diese Werte setzen:
