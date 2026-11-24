@@ -43,6 +43,10 @@ PACKS = {
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 
 
+class IncompleteCoverage(ValueError):
+    """Valid image evidence that cannot support a complete security decision."""
+
+
 class ComposeLoader(yaml.SafeLoader):
     """Safe YAML with ordinary duplicate keys rejected before merge expansion."""
 
@@ -124,13 +128,11 @@ def evaluate_report(report, image, platform):
     if not isinstance(config, dict) or config.get("architecture") != architecture or config.get("os") != operating_system:
         raise ValueError("Report belongs to another platform")
     system = metadata.get("OS")
-    if not isinstance(system, dict) or not system.get("Family") or not system.get("Name"):
-        raise ValueError("Operating-system coverage is unknown")
-    if not isinstance(system.get("EOSL", False), bool):
+    if isinstance(system, dict) and not isinstance(system.get("EOSL", False), bool):
         raise ValueError("Invalid operating-system support evidence")
-    results = report.get("Results")
-    if not isinstance(results, list) or not results:
-        raise ValueError("Missing package scan results")
+    results = report.get("Results", [])
+    if not isinstance(results, list):
+        raise ValueError("Invalid package scan results")
     fixable = 0
     findings = 0
     os_packages = False
@@ -153,8 +155,12 @@ def evaluate_report(report, image, platform):
             findings += 1
             if finding["Severity"] in ("HIGH", "CRITICAL") and fixed.strip():
                 fixable += 1
+    if not isinstance(system, dict) or not system.get("Family") or not system.get("Name"):
+        raise IncompleteCoverage("Operating-system coverage is unknown")
+    if not results:
+        raise IncompleteCoverage("Missing package scan results")
     if not os_packages:
-        raise ValueError("No operating-system package inventory was scanned")
+        raise IncompleteCoverage("No operating-system package inventory was scanned")
     return {
         "image": image,
         "platform": platform,
@@ -205,14 +211,26 @@ def scan_package(root, pack, platform, report_dir):
             try:
                 if code != 0:
                     raise ValueError("The image scan did not complete")
-                evaluation = evaluate_report(json.loads(report_path.read_text()), image, platform)
+                coverage_error = None
+                try:
+                    evaluation = evaluate_report(json.loads(report_path.read_text()), image, platform)
+                except IncompleteCoverage as error:
+                    coverage_error = error
                 sarif_path = report_dir / f"{name}.sarif"
-                convert = ["trivy", "convert", *common, "--format", "sarif", "--output", str(sarif_path), str(report_path)]
+                converted_path = work / f"{name}.sarif"
+                convert = ["trivy", "convert", *common, "--format", "sarif", "--output", str(converted_path), str(report_path)]
                 if run_logged(convert, report_dir / f"{name}-convert.log", work, environment, timeout=120) != 0:
                     raise ValueError("SARIF conversion did not complete")
-                sarif = json.loads(sarif_path.read_text())
-                if not isinstance(sarif, dict) or sarif.get("version") != "2.1.0" or not isinstance(sarif.get("runs"), list) or not sarif["runs"]:
+                sarif = json.loads(converted_path.read_text())
+                if not isinstance(sarif, dict) or sarif.get("version") != "2.1.0" or not isinstance(sarif.get("runs"), list) or not sarif["runs"] or not all(isinstance(run, dict) for run in sarif["runs"]):
                     raise ValueError("SARIF evidence is incomplete")
+                if coverage_error is not None:
+                    # A partial scan must not replace the category of a full scan.
+                    for run in sarif["runs"]:
+                        run["automationDetails"] = {"id": f"container-images-partial/{name}/{platform.split('/')[-1]}/"}
+                    sarif_path.write_text(json.dumps(sarif, indent=2) + "\n")
+                    raise coverage_error
+                sarif_path.write_bytes(converted_path.read_bytes())
                 result_code = max(result_code, evaluation["exit_code"])
                 summary.append(evaluation)
                 print(f"{name}: complete scan; {evaluation['fixable_high_critical']} fixable high/critical findings; end-of-life OS: {evaluation['end_of_life_os']}")

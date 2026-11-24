@@ -214,6 +214,88 @@ class ImageScanTests(unittest.TestCase):
         self.assertEqual(len(summary["images"]), 4)
         self.assertEqual(len(reports), 5)
 
+    def run_report_preservation_scan(self, problem):
+        calls, originals = [], {}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "source"
+            root.mkdir()
+            self.make_compose(root, "emby")
+            output = Path(temp) / "reports"
+
+            def fake_run(command, log, cwd, environment, timeout=1000):
+                calls.append(command)
+                log.write_text("offline report-preservation fixture\n")
+                if command[1] == "--version":
+                    return 0
+                destination = Path(command[command.index("--output") + 1])
+                if command[1] == "image":
+                    value = report(image=command[-1])
+                    if destination.stem == "emby":
+                        value["Results"][0]["Vulnerabilities"] = [{"Severity": "HIGH", "FixedVersion": "1.1"}]
+                        if problem == "missing-os":
+                            value["Metadata"].pop("OS")
+                        if problem in ("missing-os", "missing-inventory"):
+                            value["Results"][0]["Class"] = "lang-pkgs"
+                        if problem == "missing-results":
+                            value.pop("Results")
+                        if problem == "wrong-image":
+                            value["ArtifactName"] = "unreviewed/image:latest"
+                        if problem == "wrong-platform":
+                            value["Metadata"]["ImageConfig"]["architecture"] = "arm64"
+                        if problem == "invalid-finding":
+                            value["Metadata"].pop("OS")
+                            value["Results"][0]["Vulnerabilities"] = [None]
+                    originals[destination.name] = (json.dumps(value, indent=4) + "\n").encode()
+                    destination.write_bytes(originals[destination.name])
+                else:
+                    source = json.loads(Path(command[-1]).read_text())
+                    results = [{"ruleId": "example-high", "message": {"text": "Example finding"}}
+                               for result in source.get("Results", []) for _ in result.get("Vulnerabilities", [])]
+                    value = {"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "Trivy"}}, "results": results}]}
+                    if problem == "invalid-sarif" and destination.stem == "emby":
+                        value["runs"] = []
+                    destination.write_text(json.dumps(value))
+                return 0
+
+            with patch.object(scanner, "run_logged", side_effect=fake_run), redirect_stdout(io.StringIO()):
+                code = scanner.scan_package(root, "emby", "linux/amd64", output)
+            summary = json.loads((output / "summary.json").read_text())
+            sarif = {p.stem: json.loads(p.read_text()) for p in output.glob("*.sarif")}
+            preserved = all((output / name).read_bytes() == value for name, value in originals.items())
+        return code, summary, sarif, calls, preserved
+
+    def test_partial_reports_preserve_findings_and_stay_failed(self):
+        for problem in ("missing-os", "missing-inventory", "missing-results"):
+            with self.subTest(problem=problem):
+                code, summary, sarif, calls, preserved = self.run_report_preservation_scan(problem)
+                self.assertEqual(code, 2)
+                self.assertEqual(summary["images"][0]["exit_code"], 2)
+                self.assertTrue(preserved)
+                self.assertEqual(len([c for c in calls if c[1] == "image"]), 4)
+                self.assertEqual(set(sarif), {"emby", "swag", "easyepg", "telerising"})
+                partial = sarif["emby"]["runs"][0]
+                self.assertEqual(len(partial["results"]), 0 if problem == "missing-results" else 1)
+                self.assertEqual(partial["automationDetails"]["id"], "container-images-partial/emby/amd64/")
+                self.assertTrue(all("automationDetails" not in sarif[name]["runs"][0] for name in ("swag", "easyepg", "telerising")))
+
+    def test_invalid_identity_or_findings_are_not_published_as_partial(self):
+        for problem in ("wrong-image", "wrong-platform", "invalid-finding"):
+            with self.subTest(problem=problem):
+                code, summary, sarif, calls, preserved = self.run_report_preservation_scan(problem)
+                self.assertEqual(code, 2)
+                self.assertEqual(summary["images"][0]["exit_code"], 2)
+                self.assertTrue(preserved)
+                self.assertNotIn("emby", sarif)
+                self.assertEqual(len([c for c in calls if c[1] == "convert"]), 3)
+                self.assertEqual(len([c for c in calls if c[1] == "image"]), 4)
+
+    def test_invalid_converted_report_is_not_exposed_for_upload(self):
+        code, _, sarif, _, preserved = self.run_report_preservation_scan("invalid-sarif")
+        self.assertEqual(code, 2)
+        self.assertTrue(preserved)
+        self.assertNotIn("emby", sarif)
+        self.assertEqual(set(sarif), {"swag", "easyepg", "telerising"})
+
 
 if __name__ == "__main__":
     unittest.main()
