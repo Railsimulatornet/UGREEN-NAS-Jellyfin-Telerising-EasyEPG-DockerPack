@@ -210,3 +210,7 @@ The [Compose Validation](https://github.com/Railsimulatornet/UGREEN-NAS-Jellyfin
 ### License
 
 [MIT License](LICENSE). Roman Glos / Railsimulatornet.
+
+## Wartung / Maintenance
+
+[MAINTENANCE.md](MAINTENANCE.md) beschreibt die automatischen Image-Prüfungen und sichere Updates. / See [MAINTENANCE.md](MAINTENANCE.md) for automatic image checks and safe updates.

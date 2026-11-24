@@ -1,0 +1,141 @@
+name: Image security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/docker-compose*.yaml'
+      - '**/docker-compose*.yml'
+      - '**/compose.yaml'
+      - '**/compose.yml'
+      - '**/compose.*.yaml'
+      - '**/compose.*.yml'
+      - '.github/workflows/image-security.yml'
+      - '.github/scripts/image-security.py'
+      - '.github/scripts/test-image-security.py'
+      - '.github/security/requirements.txt'
+  pull_request:
+    paths:
+      - '**/docker-compose*.yaml'
+      - '**/docker-compose*.yml'
+      - '**/compose.yaml'
+      - '**/compose.yml'
+      - '**/compose.*.yaml'
+      - '**/compose.*.yml'
+      - '.github/workflows/image-security.yml'
+      - '.github/scripts/image-security.py'
+      - '.github/scripts/test-image-security.py'
+      - '.github/security/requirements.txt'
+  schedule:
+    - cron: '31 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Scan images (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install reviewed scan dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/image-security-venv"
+          "$RUNNER_TEMP/image-security-venv/bin/python" -m pip install --disable-pip-version-check --requirement .github/security/requirements.txt
+          echo "$RUNNER_TEMP/image-security-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Test report validation and image coverage
+        run: python3 .github/scripts/test-image-security.py
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: latest
+          cache: false
+
+      - name: Scan reviewed public images
+        id: scan
+        env:
+          SCAN_PLATFORM: linux/${{ matrix.arch }}
+        run: >-
+          python3 .github/scripts/image-security.py jellyfin
+          --platform "$SCAN_PLATFORM"
+          --report-dir "$RUNNER_TEMP/image-security"
+
+      - name: Record source and available reports
+        id: reports
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/image-security"
+          git rev-parse HEAD > "$RUNNER_TEMP/image-security/source-revision.txt"
+          for name in jellyfin swag easyepg telerising; do
+            if [[ -s "$RUNNER_TEMP/image-security/$name.sarif" ]]; then
+              printf '%s=true\n' "$name" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      - name: Preserve complete scan evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: image-security-${{ matrix.arch }}
+          path: ${{ runner.temp }}/image-security/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish jellyfin scan results
+        if: ${{ always() && steps.reports.outputs.jellyfin == 'true' }}
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          sarif_file: ${{ runner.temp }}/image-security/jellyfin.sarif
+          category: container-images/jellyfin/${{ matrix.arch }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.number) || github.ref }}
+          sha: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Publish swag scan results
+        if: ${{ always() && steps.reports.outputs.swag == 'true' }}
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          sarif_file: ${{ runner.temp }}/image-security/swag.sarif
+          category: container-images/swag/${{ matrix.arch }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.number) || github.ref }}
+          sha: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Publish easyepg scan results
+        if: ${{ always() && steps.reports.outputs.easyepg == 'true' }}
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          sarif_file: ${{ runner.temp }}/image-security/easyepg.sarif
+          category: container-images/easyepg/${{ matrix.arch }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.number) || github.ref }}
+          sha: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Publish telerising scan results
+        if: ${{ always() && steps.reports.outputs.telerising == 'true' }}
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          sarif_file: ${{ runner.temp }}/image-security/telerising.sarif
+          category: container-images/telerising/${{ matrix.arch }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.number) || github.ref }}
+          sha: ${{ github.event.pull_request.head.sha || github.sha }}
